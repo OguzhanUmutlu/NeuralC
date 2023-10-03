@@ -1,0 +1,11 @@
+{
+  "name": "neuralc",
+  "description": "A neural network library written in C++ which supports JavaScript. Inspired by brain.js",
+  "version": "0.0.1",
+  "scripts": {
+    "test": "node tests/test.js",
+    "rebuild": "node-gyp clean && node-gyp configure && node-gyp build",
+    "install": "node-gyp clean && node-gyp configure && node-gyp build"
+  },
+  "types": "./index.d.ts"
+}
