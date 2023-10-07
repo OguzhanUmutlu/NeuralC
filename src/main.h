@@ -21,27 +21,27 @@
         }                                                                    \
     } while (0)
 
-#define NAPI_ERROR(env, message)                                   \
+#define NAPI_ERROR(env, message)                                         \
     std::cout << "A C++ Exception has been thrown: " << message << "\n"; \
     napi_throw_error(env, NULL, message);
 
-#define DO_UNWRAP(obj, any, ret) NC(_, napi_unwrap(_, obj, reinterpret_cast<void **>(&any)), "Couldn't unwrap the data from the function call. Probably because the function was used as a variable and called afterward.", ret)
+#define DO_UNWRAP(obj, any, ret) NC(env, napi_unwrap(env, obj, reinterpret_cast<void **>(&any)), "Couldn't unwrap the data from the function call. Probably because the function was used as a variable and called afterward.", ret)
 
-#define DO_WRAP(obj, store, type, ret) NC(                                                                                 \
-    _, napi_wrap(                                                                                                          \
-           _, obj, store, [](napi_env env, void *data, void *hint) { delete static_cast<type>(data); }, nullptr, nullptr), \
+#define DO_WRAP(obj, store, type, ret) NC(                                                                                     \
+    env, napi_wrap(                                                                                                            \
+             env, obj, store, [](napi_env env, void *data, void *hint) { delete static_cast<type>(data); }, nullptr, nullptr), \
     "Couldn't wrap the neural network.", ret)
 
-#define EXPECT_TYPE(any, type, ret)                                      \
-    do                                                                   \
-    {                                                                    \
-        napi_valuetype T;                                                \
-        napi_typeof(_, any, &T);                                         \
-        if (T != type)                                                   \
-        {                                                                \
-            NAPI_ERROR(_, "Expected '" #any "' to be a type of " #type); \
-            return ret;                                                  \
-        }                                                                \
+#define EXPECT_TYPE(any, type, ret)                                        \
+    do                                                                     \
+    {                                                                      \
+        napi_valuetype T;                                                  \
+        napi_typeof(env, any, &T);                                         \
+        if (T != type)                                                     \
+        {                                                                  \
+            NAPI_ERROR(env, "Expected '" #any "' to be a type of " #type); \
+            return ret;                                                    \
+        }                                                                  \
     } while (0)
 
 char *read_string(napi_env env, napi_value value);

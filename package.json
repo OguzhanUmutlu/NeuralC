@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "scripts": {
     "test": "node tests/test.js",
-    "rebuild": "node-gyp clean && node-gyp configure && node-gyp build",
+    "rebuild": "node-gyp rebuild",
     "install": "node-gyp clean && node-gyp configure && node-gyp build"
   },
   "types": "./index.d.ts"

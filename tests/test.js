@@ -1,11 +1,11 @@
-const {NeuralNetwork} = require("../index");
+const { NeuralNetwork } = require("../index");
 
 Error.stackTraceLimit = 1;
 
 function testData(data) {
     const net = new NeuralNetwork();
     console.time("train");
-    net.train(data, {iterations: 1670});
+    net.train(data);
     console.timeEnd("train");
 
     for (const dat of data) {
@@ -20,8 +20,8 @@ function testData(data) {
 
 
 testData([
-    {input: [0, 0], output: [0, 1]},
-    {input: [0, 1], output: [1, 1]},
-    {input: [1, 0], output: [1, 1]},
-    {input: [1, 1], output: [0, 0]},
+    { input: [0, 0], output: [0, 1] },
+    { input: [0, 1], output: [1, 1] },
+    { input: [1, 0], output: [1, 1] },
+    { input: [1, 1], output: [0, 0] },
 ]);

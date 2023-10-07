@@ -39,12 +39,21 @@ declare class NeuralNetwork {
 
     updateTrainingOptions(options: Partial<NeuralNetworkTrainingOptions>): void;
 
-    train(data: { input: int32[], output: int32[] }[], trainOptions?: Partial<NeuralNetworkTrainingOptions>): {
+    train(data: { input: double[], output: double[] }[], result?: true): {
         error: double,
         iterations: int32
     };
 
-    run(input: int32[]): int32[];
+    train(data: { input: double[], output: double[] }[], result: false): void;
+
+    trainF(inputs: Float64Array, inputSize: int32, outputs: Float64Array, outputSize: int32, result?: true): {
+        error: double,
+        iterations: int32
+    };
+
+    trainF(inputs: Float64Array, inputSize: int32, outputs: Float64Array, outputSize: int32, result: false): void;
+
+    run(input: double[]): Float64Array[];
 }
 
 declare const __: { NeuralNetwork: typeof NeuralNetwork };

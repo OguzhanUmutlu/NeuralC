@@ -10,7 +10,7 @@
 #define _ARG(__argc)      \
     size_t argc = __argc; \
     napi_value args[1];   \
-    prepare_args(_, argv, argc, args);
+    prepare_args(env, info, argc, args);
 
 #define ACTIVATION_SIGMOID 0
 #define ACTIVATION_RELU 1
@@ -29,7 +29,7 @@
 #define RUN_INPUT(fn)                                                    \
     if (outputLayer < 1)                                                 \
     {                                                                    \
-        NAPI_ERROR(_, "output was empty");                               \
+        NAPI_ERROR(env, "output was empty");                             \
         return std::vector<double>();                                    \
     }                                                                    \
     outputs[0] = input;                                                  \
@@ -155,7 +155,7 @@ struct Status
 
 struct NeuralNetwork
 {
-    NeuralNetwork(napi_env _, napi_value _this) : _this(), _()
+    NeuralNetwork(napi_env env, napi_value _this) : _this(), env()
     {
         options = NeuralNetworkOptions();
         trainOptions = NeuralNetworkTrainOptions();
@@ -164,7 +164,7 @@ struct NeuralNetwork
         errorCheckInterval = 1;
     };
     napi_value _this;
-    napi_env _;
+    napi_env env;
     NeuralNetworkOptions options;
     NeuralNetworkTrainOptions trainOptions;
     std::vector<int> sizes;
@@ -185,7 +185,7 @@ struct NeuralNetwork
     {
         if (!isRunnable())
         {
-            NAPI_ERROR(_, "Sizes must be set before initializing");
+            NAPI_ERROR(env, "Sizes must be set before initializing");
             return;
         }
         outputLayer = sizes.size() - 1;
@@ -231,13 +231,13 @@ struct NeuralNetwork
     {
         if (!isRunnable())
         {
-            NAPI_ERROR(_, "network not runnable");
+            NAPI_ERROR(env, "network not runnable");
             return std::vector<double>(0);
         }
         int inputSize = sizes[0];
         if (input.size() != inputSize)
         {
-            NAPI_ERROR(_, "input length must match options.inputSize");
+            NAPI_ERROR(env, "input length must match options.inputSize");
             return std::vector<double>(0);
         }
         return runInput(input);
@@ -252,7 +252,7 @@ struct NeuralNetwork
             return _runInputLeakyRelu(input);
         if (trainOptions.activation == ACTIVATION_TANH)
             return _runInputTanh(input);
-        NAPI_ERROR(_, "Invalid activation code.");
+        NAPI_ERROR(env, "Invalid activation code.");
         return std::vector<double>(0);
     };
     std::vector<double> _runInputSigmoid(std::vector<double> input)
@@ -281,7 +281,7 @@ struct NeuralNetwork
             return _calculateDeltasLeakyRelu(target);
         if (trainOptions.activation == ACTIVATION_TANH)
             return _calculateDeltasTanh(target);
-        NAPI_ERROR(_, "Invalid activation code.");
+        NAPI_ERROR(env, "Invalid activation code.");
     };
     void _calculateDeltasSigmoid(std::vector<double> target)
     {
@@ -372,10 +372,10 @@ struct NeuralNetwork
         if (trainOptions.callback != nullptr && status->iterations % trainOptions.callbackPeriod == 0)
         {
             napi_value args[1];
-            args[0] = create_object(_);
-            set_object_key(_, args[0], "iterations", create_int32(_, status->iterations));
-            set_object_key(_, args[0], "error", create_double(_, status->error));
-            call_function(_, trainOptions.callback, 1, args);
+            args[0] = create_object(env);
+            set_object_key(env, args[0], "iterations", create_int32(env, status->iterations));
+            set_object_key(env, args[0], "error", create_double(env, status->error));
+            call_function(env, trainOptions.callback, 1, args);
         }
         return true;
     };
@@ -388,18 +388,18 @@ struct NeuralNetwork
         int endTime = trainOptions.timeout == -1 ? -1 : getDateNow() + trainOptions.timeout;
         if (inputs.size() != outputs.size())
         {
-            NAPI_ERROR(_, "Expected the same amount of inputs and outputs.");
+            NAPI_ERROR(env, "Expected the same amount of inputs and outputs.");
             return nullptr;
         }
         verifyIsInitialized(inputs, outputs);
         if (inputs[0].size() != sizes[0])
         {
-            NAPI_ERROR(_, "Unexpected input size.");
+            NAPI_ERROR(env, "Unexpected input size.");
             return nullptr;
         }
         if (outputs[0].size() != sizes.back())
         {
-            NAPI_ERROR(_, "Unexpected output size.");
+            NAPI_ERROR(env, "Unexpected output size.");
             return nullptr;
         }
         while (trainingTick(inputs, outputs, status, endTime))
@@ -530,87 +530,87 @@ struct NeuralNetwork
     };
 };
 
-#define GET_NORMAL_OPTION(t, create) set_object_key(_, opts, #t, create(_, nn->options.t))
+#define GET_NORMAL_OPTION(t, create) set_object_key(env, opts, #t, create(env, nn->options.t))
 
-napi_value getOptions(napi_env _, napi_callback_info argv)
+napi_value getOptions(napi_env env, napi_callback_info info)
 {
     napi_value _this;
     NeuralNetwork *nn;
-    prepare_this(_, argv, _this);
+    prepare_this(env, info, _this);
     DO_UNWRAP(_this, nn, nullptr);
-    napi_value opts = create_object(_);
+    napi_value opts = create_object(env);
     GET_NORMAL_OPTION(inputSize, create_int32);
-    napi_value hiddenLayers = create_array(_);
+    napi_value hiddenLayers = create_array(env);
     int hiddenLayersSize = nn->options.hiddenLayers.size();
     for (int i = 0; i < hiddenLayersSize; i++)
     {
-        napi_set_named_property(_, hiddenLayers, std::to_string(i).c_str(), create_int32(_, nn->options.hiddenLayers[i]));
+        napi_set_named_property(env, hiddenLayers, std::to_string(i).c_str(), create_int32(env, nn->options.hiddenLayers[i]));
     }
-    set_object_key(_, opts, "hiddenLayers", hiddenLayers);
+    set_object_key(env, opts, "hiddenLayers", hiddenLayers);
     GET_NORMAL_OPTION(outputSize, create_int32);
     GET_NORMAL_OPTION(binaryThresh, create_double);
     return opts;
 };
 
-#define SET_NORMAL_OPTION(t, read, type, cond)                  \
-    if (has_object_key(_, opts, #t))                            \
-    {                                                           \
-        napi_value k = get_object_key(_, opts, #t);             \
-        EXPECT_TYPE(k, type, false);                            \
-        int r = read(_, k);                                     \
-        if (cond)                                               \
-        {                                                       \
-            NAPI_ERROR(_, "Failed to set the option: " #t "."); \
-            return false;                                       \
-        }                                                       \
-        nn->options.t = r;                                      \
+#define SET_NORMAL_OPTION(t, read, type, cond)                    \
+    if (has_object_key(env, opts, #t))                            \
+    {                                                             \
+        napi_value k = get_object_key(env, opts, #t);             \
+        EXPECT_TYPE(k, type, false);                              \
+        int r = read(env, k);                                     \
+        if (cond)                                                 \
+        {                                                         \
+            NAPI_ERROR(env, "Failed to set the option: " #t "."); \
+            return false;                                         \
+        }                                                         \
+        nn->options.t = r;                                        \
     }
 
-bool updateOptionsAlias(napi_env _, NeuralNetwork *nn, napi_value opts)
+bool updateOptionsAlias(napi_env env, NeuralNetwork *nn, napi_value opts)
 {
     SET_NORMAL_OPTION(inputSize, read_int32, napi_number, r <= 0);
     SET_NORMAL_OPTION(outputSize, read_int32, napi_number, r <= 0);
     SET_NORMAL_OPTION(binaryThresh, read_double, napi_number, r <= 0 || r >= 1);
-    if (has_object_key(_, opts, "hiddenLayers"))
+    if (has_object_key(env, opts, "hiddenLayers"))
     {
         nn->options.hiddenLayers.clear();
-        napi_value arr = get_object_key(_, opts, "hiddenLayers");
-        if (!is_array(_, arr))
+        napi_value arr = get_object_key(env, opts, "hiddenLayers");
+        if (!is_array(env, arr))
         {
-            NAPI_ERROR(_, "Expected options.hiddenLayers to be an array.");
-            return nullptr;
+            NAPI_ERROR(env, "Expected options.hiddenLayers to be an array.");
+            return false;
         }
-        int arrSize = get_array_length(_, arr);
+        int arrSize = get_array_length(env, arr);
         for (int i = 0; i < arrSize; i++)
         {
-            nn->options.hiddenLayers.push_back(read_int32(_, get_object_key(_, arr, std::to_string(i).c_str())));
+            nn->options.hiddenLayers.push_back(read_int32(env, get_object_key(env, arr, std::to_string(i).c_str())));
         }
     }
     return true;
 }
 
-napi_value updateOptions(napi_env _, napi_callback_info argv)
+napi_value updateOptions(napi_env env, napi_callback_info info)
 {
     napi_value _this;
     NeuralNetwork *nn;
     size_t argc = 1;
     napi_value args[1];
-    prepare_args_this(_, argv, argc, args, _this);
+    prepare_args_this(env, info, argc, args, _this);
     DO_UNWRAP(_this, nn, nullptr);
     napi_value opts = args[0];
-    updateOptionsAlias(_, nn, opts);
+    updateOptionsAlias(env, nn, opts);
     return nullptr;
 };
 
-#define GET_TRAINING_OPTION(t, read) set_object_key(_, opts, #t, read(_, nn->trainOptions.t))
+#define GET_TRAINING_OPTION(t, read) set_object_key(env, opts, #t, read(env, nn->trainOptions.t))
 
-napi_value getTrainingOptions(napi_env _, napi_callback_info argv)
+napi_value getTrainingOptions(napi_env env, napi_callback_info info)
 {
     napi_value _this;
     NeuralNetwork *nn;
-    prepare_this(_, argv, _this);
+    prepare_this(env, info, _this);
     DO_UNWRAP(_this, nn, nullptr);
-    napi_value opts = create_object(_);
+    napi_value opts = create_object(env);
     GET_TRAINING_OPTION(activation, create_int32);
     GET_TRAINING_OPTION(iterations, create_int32);
     GET_TRAINING_OPTION(errorThresh, create_double);
@@ -619,7 +619,7 @@ napi_value getTrainingOptions(napi_env _, napi_callback_info argv)
     GET_TRAINING_OPTION(leakyReluAlpha, create_double);
     GET_TRAINING_OPTION(learningRate, create_double);
     GET_TRAINING_OPTION(momentum, create_double);
-    set_object_key(_, opts, "callback", nn->trainOptions.callback == nullptr ? create_undefined(_) : nn->trainOptions.callback);
+    set_object_key(env, opts, "callback", nn->trainOptions.callback == nullptr ? create_undefined(env) : nn->trainOptions.callback);
     GET_TRAINING_OPTION(callbackPeriod, create_int32);
     GET_TRAINING_OPTION(timeout, create_int32);
     GET_TRAINING_OPTION(beta1, create_double);
@@ -629,21 +629,21 @@ napi_value getTrainingOptions(napi_env _, napi_callback_info argv)
     return opts;
 };
 
-#define SET_TRAINING_OPTION(t, read, type, cond)                         \
-    if (has_object_key(_, opts, #t))                                     \
-    {                                                                    \
-        napi_value k = get_object_key(_, opts, #t);                      \
-        EXPECT_TYPE(k, type, false);                                     \
-        int r = read(_, k);                                              \
-        if (cond)                                                        \
-        {                                                                \
-            NAPI_ERROR(_, "Failed to set the training option: " #t "."); \
-            return false;                                                \
-        }                                                                \
-        nn->trainOptions.t = r;                                          \
+#define SET_TRAINING_OPTION(t, read, type, cond)                           \
+    if (has_object_key(env, opts, #t))                                     \
+    {                                                                      \
+        napi_value k = get_object_key(env, opts, #t);                      \
+        EXPECT_TYPE(k, type, false);                                       \
+        int r = read(env, k);                                              \
+        if (cond)                                                          \
+        {                                                                  \
+            NAPI_ERROR(env, "Failed to set the training option: " #t "."); \
+            return false;                                                  \
+        }                                                                  \
+        nn->trainOptions.t = r;                                            \
     }
 
-bool updateTrainingOptionsAlias(napi_env _, NeuralNetwork *nn, napi_value opts)
+bool updateTrainingOptionsAlias(napi_env env, NeuralNetwork *nn, napi_value opts)
 {
     SET_TRAINING_OPTION(activation, read_int32, napi_number, r < ACTIVATION_MIN || r > ACTIVATION_MAX);
     SET_TRAINING_OPTION(iterations, read_int32, napi_number, r <= 0);
@@ -654,11 +654,11 @@ bool updateTrainingOptionsAlias(napi_env _, NeuralNetwork *nn, napi_value opts)
     SET_TRAINING_OPTION(learningRate, read_double, napi_number, r <= 0 || r >= 1);
     SET_TRAINING_OPTION(momentum, read_double, napi_number, r <= 0 || r >= 1);
 
-    if (has_object_key(_, opts, "callback"))
+    if (has_object_key(env, opts, "callback"))
     {
-        napi_value r = get_object_key(_, opts, "callback");
+        napi_value r = get_object_key(env, opts, "callback");
         napi_valuetype type;
-        napi_typeof(_, r, &type);
+        napi_typeof(env, r, &type);
         if (type == napi_undefined)
         {
             nn->trainOptions.callback = nullptr;
@@ -667,11 +667,11 @@ bool updateTrainingOptionsAlias(napi_env _, NeuralNetwork *nn, napi_value opts)
         {
             if (type != napi_function)
             {
-                NAPI_ERROR(_, "Failed to set the training option: callback. Expected a function.");
-                return nullptr;
+                NAPI_ERROR(env, "Failed to set the training option: callback. Expected a function.");
+                return false;
             }
             nn->trainOptions.callback = r;
-            call_function(_, r, 0, nullptr);
+            call_function(env, r, 0, nullptr);
         }
     }
 
@@ -684,46 +684,42 @@ bool updateTrainingOptionsAlias(napi_env _, NeuralNetwork *nn, napi_value opts)
     return true;
 }
 
-napi_value updateTrainingOptions(napi_env _, napi_callback_info argv)
+napi_value updateTrainingOptions(napi_env env, napi_callback_info info)
 {
     napi_value _this;
     NeuralNetwork *nn;
     size_t argc = 1;
     napi_value args[1];
-    prepare_args_this(_, argv, argc, args, _this);
+    prepare_args_this(env, info, argc, args, _this);
     DO_UNWRAP(_this, nn, nullptr);
     napi_value opts = args[0];
-    updateTrainingOptionsAlias(_, nn, opts);
+    updateTrainingOptionsAlias(env, nn, opts);
     return nullptr;
 };
 
-napi_value train(napi_env _, napi_callback_info argv)
+napi_value train(napi_env env, napi_callback_info info)
 {
     napi_value _this;
     NeuralNetwork *nn;
-    size_t argc = 1;
-    napi_value args[1];
-    prepare_args_this(_, argv, argc, args, _this);
+    size_t argc = 2;
+    napi_value args[2];
+    prepare_args_this(env, info, argc, args, _this);
     DO_UNWRAP(_this, nn, nullptr);
     if (argc != 1 && argc != 2)
     {
-        NAPI_ERROR(_, "Only one or two argument expected for .train()");
+        NAPI_ERROR(env, "Only one or two argument expected for .train()");
         return nullptr;
-    }
-    if(argc == 2) {
-        napi_value gotTrainingOptions = args[1];
-        updateTrainingOptionsAlias(_, nn, gotTrainingOptions);
     }
     napi_value elements = args[0];
-    if (!is_array(_, elements))
+    if (!is_array(env, elements))
     {
-        NAPI_ERROR(_, "Expected the first argument to be an array.");
+        NAPI_ERROR(env, "Expected the first argument to be an array.");
         return nullptr;
     }
-    int elementsSize = get_array_length(_, elements);
+    int elementsSize = get_array_length(env, elements);
     if (elementsSize == 0)
     {
-        NAPI_ERROR(_, "Expected an input for the .train() call.");
+        NAPI_ERROR(env, "Expected an input for the .train() call.");
         return nullptr;
     }
     std::vector<std::vector<double>> inputs;
@@ -732,31 +728,31 @@ napi_value train(napi_env _, napi_callback_info argv)
     int outputSize = 0;
     for (int i = 0; i < elementsSize; i++)
     {
-        napi_value el = get_object_key(_, elements, std::to_string(i).c_str());
-        napi_value in = get_object_key(_, el, "input");
-        napi_value out = get_object_key(_, el, "output");
-        if (!is_array(_, in))
+        napi_value el = get_object_key(env, elements, std::to_string(i).c_str());
+        napi_value in = get_object_key(env, el, "input");
+        napi_value out = get_object_key(env, el, "output");
+        if (!is_array(env, in))
         {
-            NAPI_ERROR(_, "Expected options.hiddenLayers to be an array.");
+            NAPI_ERROR(env, "Expected the input to be an array.");
             return nullptr;
         }
-        if (!is_array(_, out))
+        if (!is_array(env, out))
         {
-            NAPI_ERROR(_, "Expected options.hiddenLayers to be an array.");
+            NAPI_ERROR(env, "Expected the output to be an array.");
             return nullptr;
         }
-        int inSize = get_array_length(_, in);
-        int outSize = get_array_length(_, out);
+        int inSize = get_array_length(env, in);
+        int outSize = get_array_length(env, out);
         if (i == 0)
         {
             if (inSize == 0)
             {
-                NAPI_ERROR(_, "Expected the input for the .train() call to be non-empty.");
+                NAPI_ERROR(env, "Expected the input for the .train() call to be non-empty.");
                 return nullptr;
             }
             if (outSize == 0)
             {
-                NAPI_ERROR(_, "Expected the output for the .train() call to be non-empty.");
+                NAPI_ERROR(env, "Expected the output for the .train() call to be non-empty.");
                 return nullptr;
             }
             inputSize = inSize;
@@ -766,12 +762,12 @@ napi_value train(napi_env _, napi_callback_info argv)
         {
             if (inputSize != inSize)
             {
-                NAPI_ERROR(_, "Expected all inputs to have the same size.");
+                NAPI_ERROR(env, "Expected all inputs to have the same size.");
                 return nullptr;
             }
             if (outputSize != outSize)
             {
-                NAPI_ERROR(_, "Expected all inputs to have the same size.");
+                NAPI_ERROR(env, "Expected all inputs to have the same size.");
                 return nullptr;
             }
         }
@@ -779,95 +775,198 @@ napi_value train(napi_env _, napi_callback_info argv)
         std::vector<double> newOutputs;
         for (int j = 0; j < inSize; j++)
         {
-            double currentIn = read_double(_, get_object_key(_, in, std::to_string(j).c_str()));
+            double currentIn = read_double(env, get_object_key(env, in, std::to_string(j).c_str()));
             newInputs.push_back(currentIn);
         }
         for (int j = 0; j < outSize; j++)
         {
-            double currentOut = read_double(_, get_object_key(_, out, std::to_string(j).c_str()));
+            double currentOut = read_double(env, get_object_key(env, out, std::to_string(j).c_str()));
             newOutputs.push_back(currentOut);
         }
         inputs.push_back(newInputs);
         outputs.push_back(newOutputs);
     }
     Status *status = nn->train(inputs, outputs);
+    if (argc == 2)
+    {
+        bool canReturn = read_bool(env, args[1]);
+        if (!canReturn)
+        {
+            return nullptr;
+        }
+    }
     if (status == nullptr)
     {
         return nullptr;
     }
-    napi_value obj = create_object(_);
-    set_object_key(_, obj, "error", create_double(_, status->error));
-    set_object_key(_, obj, "iterations", create_int32(_, status->iterations));
+    napi_value obj = create_object(env);
+    set_object_key(env, obj, "error", create_double(env, status->error));
+    set_object_key(env, obj, "iterations", create_int32(env, status->iterations));
     return obj;
 }
 
-napi_value run(napi_env _, napi_callback_info argv)
+/*napi_value trainF(napi_env env, napi_callback_info info)
 {
     napi_value _this;
     NeuralNetwork *nn;
     size_t argc = 1;
     napi_value args[1];
-    prepare_args_this(_, argv, argc, args, _this);
+    napi_status status = napi_get_cb_info(env, info, &argc, args, &_this, nullptr);
+    if (status != napi_ok)
+    {
+        napi_throw_error(env, NULL, "Failed to get callback info.");
+        return NULL;
+    }
+    DO_UNWRAP(_this, nn, nullptr);
+    if (argc != 4 && argc != 5)
+    {
+        napi_throw_error(env, NULL, "Only two or three argument expected for .train()");
+        return NULL;
+    }
+    napi_value gotInputs = args[0]; // Float32Array
+    int inputSize = read_int32(env, args[1]);
+    napi_value gotOutputs = args[2]; // Float32Array
+    int outputSize = read_int32(env, args[3]);
+    bool isGotInputsTypedArray;
+    napi_is_typedarray(env, gotInputs, &isGotInputsTypedArray);
+    if (!isGotInputsTypedArray)
+    {
+        napi_throw_error(env, NULL, "Only two or three argument expected for .train()");
+        return NULL;
+    }
+    napi_typedarray_type arrType;
+    size_t arrLen;
+    void *arrData;
+
+    status = napi_get_typedarray_info(env, args[0], &arrType, &arrLen, &arrData, NULL, NULL);
+    if (status != napi_ok || arrType != napi_float32_array)
+    {
+        napi_throw_type_error(env, NULL, "Expected the inputs argument to be a Float32Array");
+        return NULL;
+    }
+    double *inputs = static_cast<double *>(arrData);
+
+    status = napi_get_typedarray_info(env, args[0], &arrType, &arrLen, &arrData, NULL, NULL);
+    if (status != napi_ok || arrType != napi_float32_array)
+    {
+        napi_throw_type_error(env, NULL, "Expected the inputs argument to be a Float32Array");
+        return NULL;
+    }
+    double *inputs = static_cast<double *>(arrData);
+
+    napi_typedarray_type gotOutputsType;
+    size_t outputsLength;
+    void *outputsData;
+    status = napi_get_typedarray_info(env, args[0], &gotInputsType, &outputsLength, &outputsData, NULL, NULL);
+    if (status != napi_ok || gotInputsType != napi_float32_array)
+    {
+        napi_throw_type_error(env, NULL, "Expected the inputs argument to be a Float32Array");
+        return NULL;
+    }
+    double *outputs = static_cast<double *>(arrData);
+
+    Status *trainStatus = nn->train(inputs, outputs);
+    if (argc == 5)
+    {
+        bool canReturn = read_bool(env, args[4]);
+        if (!canReturn)
+        {
+            return nullptr;
+        }
+    }
+    if (trainStatus == nullptr)
+    {
+        return nullptr;
+    }
+    napi_value obj = create_object(env);
+    set_object_key(env, obj, "error", create_double(env, trainStatus->error));
+    set_object_key(env, obj, "iterations", create_int32(env, trainStatus->iterations));
+    return obj;
+}*/
+
+napi_value run(napi_env env, napi_callback_info info)
+{
+    napi_value _this;
+    NeuralNetwork *nn;
+    size_t argc = 1;
+    napi_value args[1];
+    napi_status status = napi_get_cb_info(env, info, &argc, args, &_this, nullptr);
+    if (status != napi_ok)
+    {
+        napi_throw_error(env, NULL, "Failed to get callback info.");
+        return NULL;
+    }
     DO_UNWRAP(_this, nn, nullptr);
     if (nn->sizes.size() == 0 || nn->outputLayer <= 0)
     {
-        NAPI_ERROR(_, "Neural network hasn't been initialised/trained yet.");
+        NAPI_ERROR(env, "Neural network hasn't been initialised/trained yet.");
         return nullptr;
     }
     if (argc != 1)
     {
-        NAPI_ERROR(_, "Only 1 argument expected for .run()");
+        NAPI_ERROR(env, "Only one argument expected for .run()");
         return nullptr;
     }
     napi_value inputs = args[0];
-    if (!is_array(_, inputs))
+    if (!is_array(env, inputs))
     {
-        NAPI_ERROR(_, "Expected options.hiddenLayers to be an array.");
+        NAPI_ERROR(env, "Expected the first argument to be an array.");
         return nullptr;
     }
-    int inputsSize = get_array_length(_, inputs);
+    int inputsSize = get_array_length(env, inputs);
     if (inputsSize != nn->sizes[0])
     {
-        NAPI_ERROR(_, "Expected the size of the input to be the same as the trained input's size.");
+        NAPI_ERROR(env, "Expected the size of the input to be the same as the trained input's size.");
         return nullptr;
     }
     std::vector<double> list;
     for (int i = 0; i < inputsSize; i++)
     {
-        napi_value el = get_object_key(_, inputs, std::to_string(i).c_str());
-        list.push_back(read_int32(_, el));
+        napi_value el = get_object_key(env, inputs, std::to_string(i).c_str());
+        list.push_back(read_int32(env, el));
     }
     std::vector<double> runResult = nn->run(list);
     int runResultSize = runResult.size();
-    napi_value resultArray = create_array_with_length(_, runResultSize);
+    napi_value resultArray = create_array_with_length(env, runResultSize);
     for (int i = 0; i < runResultSize; i++)
     {
         double out = runResult[i];
-        set_object_key(_, resultArray, std::to_string(i).c_str(), create_double(_, out));
+        set_object_key(env, resultArray, std::to_string(i).c_str(), create_double(env, out));
     }
+    /*
+    int runResultSize = runResult.size();
+    double *runResultArr = new double[runResultSize];
+    for (int i = 0; i < runResultSize; i++)
+    {
+        runResultArr[i] = runResult[i];
+    }
+    napi_value resultArray;
+    napi_value resultBuffer;
+    status = napi_create_arraybuffer(env, runResultSize * sizeof(double), (void **)&runResultArr, &resultBuffer);
+    status = napi_create_typedarray(env, napi_float64_array, runResultSize, resultBuffer, 0, &resultArray);*/
     return resultArray;
 }
 
-napi_value neuralNetworkConstructor(napi_env _, napi_callback_info argv)
+napi_value neuralNetworkConstructor(napi_env env, napi_callback_info info)
 {
-    napi_value _this = create_object(_);
-    NeuralNetwork *nn = new NeuralNetwork(_, _this);
+    napi_value _this = create_object(env);
+    NeuralNetwork *nn = new NeuralNetwork(env, _this);
     size_t argc = 1;
     napi_value args[1];
-    prepare_args(_, argv, argc, args);
+    prepare_args(env, info, argc, args);
     if (argc > 0)
     {
-        if (!updateOptionsAlias(_, nn, args[0]))
+        if (!updateOptionsAlias(env, nn, args[0]))
             return nullptr;
-        if (argc > 1 && !updateTrainingOptionsAlias(_, nn, args[1]))
+        if (argc > 1 && !updateTrainingOptionsAlias(env, nn, args[1]))
             return nullptr;
     }
     DO_WRAP(_this, nn, NeuralNetwork *, nullptr);
-    add_function_to_object(_, _this, "getOptions", getOptions);
-    add_function_to_object(_, _this, "updateOptions", updateOptions);
-    add_function_to_object(_, _this, "getTrainingOptions", getTrainingOptions);
-    add_function_to_object(_, _this, "updateTrainingOptions", updateTrainingOptions);
-    add_function_to_object(_, _this, "train", train);
-    add_function_to_object(_, _this, "run", run);
+    add_function_to_object(env, _this, "getOptions", getOptions);
+    add_function_to_object(env, _this, "updateOptions", updateOptions);
+    add_function_to_object(env, _this, "getTrainingOptions", getTrainingOptions);
+    add_function_to_object(env, _this, "updateTrainingOptions", updateTrainingOptions);
+    add_function_to_object(env, _this, "train", train);
+    add_function_to_object(env, _this, "run", run);
     return _this;
 }

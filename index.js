@@ -1,1 +1,1 @@
-module.exports = require("./build/Release/NN");
+module.exports = require("./build/Release/NeuralC");

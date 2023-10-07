@@ -1,7 +1,7 @@
 {
     "targets": [
         {
-            "target_name": "NN",
+            "target_name": "NeuralC",
             "sources": [
                 "src/main.cpp",
                 "src/main.h",
