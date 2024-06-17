@@ -9,17 +9,35 @@
 
 #include "utils.h"
 
-double nn_calculate_training_error(NeuralNetwork* nn, TrainData* data_list, uint data_amount);
 double nn_train_pattern(NeuralNetwork* nn, TrainData data);
 void nn_adjust_weights(NeuralNetwork* nn);
 void nn_calculate_deltas(NeuralNetwork* nn, double* target);
 void nn_run_internal(NeuralNetwork* nn, double* inputs);
 
-double sigmoid(double x) {
-    return 1 / (1 + exp(-x));
+// sigmoid center x=0
+#define x0_sigmoid(x) 0.5 + 0.25 * x - 0.0208333333 * x* x* x + 0.0020833333 * x* x* x* x* x
+
+inline double sigmoid(double x) {
+    if (x > 3.455) return 0.99;
+    if (x < -3.455) return 0.001;
+    // For |x| > 1.81
+    // centered at x=2.357:
+    // f(x) = 0.913489018914 + 0.0790268312376 * (x - 2.357)
+    // f(x) = 0.727223 + 0.0790268312376 * x
+    // centered at x=-2.357:
+    // f(x) = 0.0865109810861 + 0.0790268312376 * (x + 2.357)
+    // f(x) = 0.27277722231 + 0.0790268312376 * x
+    // x > 1.81 -> σ(x) = min(f(x), 1)
+    // x < -1.81 -> σ(x) = 1 - min(1 - f(x), 1)
+    if (x > 1.81) return fmin(0.727223 + 0.0790268312376 * x, 1);
+    if (x < -1.81) return 1 - fmin(0.27277722231 + 0.0790268312376 * x, 1);
+
+    // return 1 / (1 + exp(-x));
+    // Taylor approximation of the sigmoid centered at x=0, accurate in the interval [-1.274, +1.274] for x
+    return x0_sigmoid(x);
 }
 
-double relu(double x) {
+inline double relu(double x) {
     return x < 0 ? 0 : x;
 }
 
@@ -199,23 +217,20 @@ TrainingReport nn_train(NeuralNetwork* nn, TrainData* data_list, uint data_amoun
 
     while (iterations < nn->max_iterations && error > nn->error_thresh && (end_time == 0 || time(NULL) < end_time)) {
         iterations++;
-        error = nn_calculate_training_error(nn, data_list, data_amount);
+        error = 0;
+
+        // #pragma omp parallel for reduction(+:sum)
+        for (int i = 0; i < data_amount; i++) {
+            error += nn_train_pattern(nn, data_list[i]);
+        }
+
+        error /= data_amount;
+
         if (iterations % log_period == 0) {
             printf("%d iterations in %ld seconds with error: %f\n", iterations, time(NULL) - start_time, error);
         }
     }
     return (TrainingReport){error, iterations, time(NULL) - start_time};
-}
-
-double nn_calculate_training_error(NeuralNetwork* nn, TrainData* data_list, uint data_amount) {
-    double sum = 0;
-
-    // #pragma omp parallel for reduction(+:sum)
-    for (int i = 0; i < data_amount; i++) {
-        sum += nn_train_pattern(nn, data_list[i]);
-    }
-
-    return sum / data_amount;
 }
 
 double nn_train_pattern(NeuralNetwork* nn, TrainData data) {
