@@ -1,5 +1,6 @@
 #include "network.h"
 
+#include <immintrin.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,11 +42,25 @@ double* random_weights(uint size) {
     return weights;
 }
 
-double mse(double* errors, uint errors_size) {
-    double sum = 0;
-    for (int i = 0; i < errors_size; i++) {
+static inline double mse(double* errors, uint errors_size) {
+    double sum = 0.0;
+    uint i = 0;
+
+    __m256d vec_sum = _mm256_setzero_pd();
+
+    for (; i + 4 <= errors_size; i += 4) {
+        __m256d vec_errors = _mm256_loadu_pd(&errors[i]);
+        vec_sum = _mm256_add_pd(vec_sum, _mm256_mul_pd(vec_errors, vec_errors));
+    }
+
+    double temp[4];
+    _mm256_storeu_pd(temp, vec_sum);
+    sum = temp[0] + temp[1] + temp[2] + temp[3];
+
+    for (; i < errors_size; i++) {
         sum += errors[i] * errors[i];
     }
+
     return sum / errors_size;
 }
 
@@ -53,11 +68,12 @@ NeuralNetwork* nn_make(uint input_size, uint* hidden_layers, uint hidden_amount,
     NeuralNetwork* nn = (NeuralNetwork*)malloc(sizeof(NeuralNetwork));
     malloc_check(nn);
     nn->binary_thresh = 0.5;
-    nn->error_thresh = 0.00005;
+    nn->error_thresh = 0.005;
     nn->max_iterations = 20000;
     nn->learning_rate = 0.3;
     nn->momentum = 0.1;
     nn->timeout = 0;
+    nn->log_period = 1000;
 
     int layer_amount = 2 + hidden_amount;
 
@@ -85,6 +101,7 @@ NeuralNetwork* nn_make(uint input_size, uint* hidden_layers, uint hidden_amount,
 // Randomizes weights and biases
 void nn_randomize_wb(NeuralNetwork* nn) {
     uint layer_amount = nn->layer_amount;
+    nn->weights[0] = NULL;
 
     for (int layer = 0; layer < layer_amount; layer++) {
         uint size = nn->sizes[layer];
@@ -150,19 +167,24 @@ double* nn_run(NeuralNetwork* nn, double* inputs) {
 void nn_run_internal(NeuralNetwork* nn, double* inputs) {
     nn->activations[0] = inputs;
     double* output;
+
     for (int layer = 1; layer < nn->layer_amount; layer++) {
         uint size = nn->sizes[layer];
         uint prev_size = nn->sizes[layer - 1];
         double** layer_weights = nn->weights[layer];
         double* layer_biases = nn->biases[layer];
         double* layer_activations = nn->activations[layer];
-        for (int neuron = 0; neuron < size; neuron++) {
-            double* weights = layer_weights[neuron];
-            double sum = layer_biases[neuron];
-            for (int k = 0; k < prev_size; k++) {
-                sum += weights[k] * inputs[k];
+
+#pragma omp parallel for
+        for (int neuron_to = 0; neuron_to < size; neuron_to++) {
+            double* weights = layer_weights[neuron_to];
+            double sum = layer_biases[neuron_to];
+
+            for (int neuron_from = 0; neuron_from < prev_size; neuron_from++) {
+                sum += weights[neuron_from] * inputs[neuron_from];
             }
-            layer_activations[neuron] = sigmoid(sum);
+
+            layer_activations[neuron_to] = sigmoid(sum);
         }
         inputs = layer_activations;
     }
@@ -173,24 +195,26 @@ TrainingReport nn_train(NeuralNetwork* nn, TrainData* data_list, uint data_amoun
     uint iterations = 0;
     int start_time = (int)time(NULL);
     int end_time = nn->timeout && start_time + nn->timeout;
+    uint log_period = nn->log_period;
 
-    while (1) {
-        time_t t = time(NULL);
-        if (iterations >= nn->max_iterations ||
-            error <= nn->error_thresh ||
-            (end_time != 0 && t >= end_time)) {
-            return (TrainingReport){error, iterations, t - start_time};
-        }
+    while (iterations < nn->max_iterations && error > nn->error_thresh && (end_time == 0 || time(NULL) < end_time)) {
         iterations++;
         error = nn_calculate_training_error(nn, data_list, data_amount);
+        if (iterations % log_period == 0) {
+            printf("%d iterations in %ld seconds with error: %f\n", iterations, time(NULL) - start_time, error);
+        }
     }
+    return (TrainingReport){error, iterations, time(NULL) - start_time};
 }
 
 double nn_calculate_training_error(NeuralNetwork* nn, TrainData* data_list, uint data_amount) {
     double sum = 0;
-    for (int i = 0; i < data_amount; ++i) {
+
+    // #pragma omp parallel for reduction(+:sum)
+    for (int i = 0; i < data_amount; i++) {
         sum += nn_train_pattern(nn, data_list[i]);
     }
+
     return sum / data_amount;
 }
 
@@ -199,51 +223,90 @@ double nn_train_pattern(NeuralNetwork* nn, TrainData data) {
     nn_calculate_deltas(nn, data.outputs);
     nn_adjust_weights(nn);
     nn->activations[0] = NULL;
-    return mse(nn->errors[nn->layer_amount - 1], nn->sizes[nn->layer_amount - 1]);
+    uint output_layer = nn->layer_amount - 1;
+    return mse(nn->errors[output_layer], nn->sizes[output_layer]);
 }
 
 void nn_calculate_deltas(NeuralNetwork* nn, double* target) {
-    for (int layer = nn->layer_amount - 1; layer >= 0; layer--) {
-        uint active_size = nn->sizes[layer];
-        uint next_size = nn->sizes[layer + 1];
-        double* active_values = nn->activations[layer];
-        double* active_error = nn->errors[layer];
-        double* active_deltas = nn->deltas[layer];
-        double** next_layer = nn->weights[layer + 1];
-        for (int neuron = 0; neuron < active_size; neuron++) {
-            double output = active_values[neuron];
+    uint layer_amount = nn->layer_amount;
+    double learning_rate = nn->learning_rate;
+    double momentum = nn->momentum;
+    uint* sizes = nn->sizes;
+    double** errors = nn->errors;
+    double** activations = nn->activations;
+    double** deltas = nn->deltas;
+    double*** changes = nn->changes;
+    double*** weights = nn->weights;
+    double** biases = nn->biases;
+
+    for (int layer = layer_amount - 1; layer >= 0; layer--) {
+        uint size = sizes[layer];
+        uint next_size = sizes[layer + 1];
+        double* layer_activations = activations[layer];
+        double* layer_errors = errors[layer];
+        double* layer_deltas = deltas[layer];
+        double** layer_weights = weights[layer];
+
+        double* next_deltas = NULL;
+        double** next_layer = NULL;
+        if (layer < layer_amount - 1) {
+            next_deltas = deltas[layer + 1];
+            next_layer = weights[layer + 1];
+        }
+
+        for (int neuron_to = 0; neuron_to < size; neuron_to++) {
+            double output = layer_activations[neuron_to];
             double error = 0;
-            if (layer == nn->layer_amount - 1) {
-                error = target[neuron] - output;
+
+            if (layer == layer_amount - 1) {
+                error = target[neuron_to] - output;
             } else {
-                double* deltas = nn->deltas[layer + 1];
-                for (int k = 0; k < next_size; k++) {
-                    error += deltas[k] * next_layer[k][neuron];
+                for (int neuron_from = 0; neuron_from < next_size; neuron_from++) {
+                    error += next_deltas[neuron_from] * next_layer[neuron_from][neuron_to];
                 }
             }
-            active_error[neuron] = error;
-            active_deltas[neuron] = error * output * (1 - output);
+
+            layer_errors[neuron_to] = error;
+            layer_deltas[neuron_to] = error * output * (1 - output);
         }
     }
 }
 
 void nn_adjust_weights(NeuralNetwork* nn) {
-    for (int layer = 1; layer < nn->layer_amount; layer++) {
-        uint prev_size = nn->sizes[layer - 1];
-        double* incoming = nn->activations[layer - 1];
-        uint active_size = nn->sizes[layer];
-        double* active_delta = nn->deltas[layer];
-        double** active_changes = nn->changes[layer];
-        double** active_weights = nn->weights[layer];
-        double* active_biases = nn->biases[layer];
-        for (int neuron = 0; neuron < active_size; neuron++) {
-            double delta = active_delta[neuron];
-            for (int k = 0; k < prev_size; k++) {
-                double change = nn->learning_rate * delta * incoming[k] + nn->momentum * active_changes[neuron][k];
-                active_changes[neuron][k] = change;
-                active_weights[neuron][k] += change;
+    uint layer_amount = nn->layer_amount;
+    double learning_rate = nn->learning_rate;
+    double momentum = nn->momentum;
+    uint* sizes = nn->sizes;
+    double** activations = nn->activations;
+    double** deltas = nn->deltas;
+    double*** changes = nn->changes;
+    double*** weights = nn->weights;
+    double** biases = nn->biases;
+
+    for (int layer = 1; layer < layer_amount; layer++) {
+        uint size = sizes[layer];
+        uint prev_size = sizes[layer - 1];
+        double* incoming = activations[layer - 1];
+        double* layer_deltas = deltas[layer];
+        double** layer_changes = changes[layer];
+        double** layer_weights = weights[layer];
+        double* layer_biases = biases[layer];
+
+        double learning_momentum = learning_rate * momentum;
+
+        for (int neuron_to = 0; neuron_to < size; neuron_to++) {
+            double delta = layer_deltas[neuron_to];
+            double bias_change = learning_rate * delta;
+            double* layer_changes_to = layer_changes[neuron_to];
+
+            for (int neuron_from = 0; neuron_from < prev_size; neuron_from++) {
+                double input = incoming[neuron_from];
+                double change = bias_change * input + learning_momentum * layer_changes_to[neuron_from];
+                layer_changes[neuron_to][neuron_from] = change;
+                layer_weights[neuron_to][neuron_from] += change;
             }
-            active_biases[neuron] += nn->learning_rate * delta;
+
+            layer_biases[neuron_to] += bias_change;
         }
     }
 }
@@ -251,28 +314,28 @@ void nn_adjust_weights(NeuralNetwork* nn) {
 void nn_free(NeuralNetwork* nn) {
     for (int layer = 0; layer < nn->layer_amount; layer++) {
         uint size = nn->sizes[layer];
-        free(nn->biases[layer]);
-        free(nn->deltas[layer]);
-        free(nn->errors[layer]);
+        rm_free(nn->biases[layer]);
+        rm_free(nn->deltas[layer]);
+        rm_free(nn->errors[layer]);
         if (layer > 0) {
-            free(nn->activations[layer]);
+            rm_free(nn->activations[layer]);
             uint prev_size = nn->sizes[layer - 1];
             for (int neuron_index = 0; neuron_index < size; neuron_index++) {
-                free(nn->weights[layer][neuron_index]);
-                free(nn->changes[layer][neuron_index]);
+                rm_free(nn->weights[layer][neuron_index]);
+                rm_free(nn->changes[layer][neuron_index]);
             }
-            free(nn->weights[layer]);
-            free(nn->changes[layer]);
+            rm_free(nn->weights[layer]);
+            rm_free(nn->changes[layer]);
         }
     }
-    free(nn->sizes);
-    free(nn->biases);
-    free(nn->activations);
-    free(nn->deltas);
-    free(nn->errors);
-    free(nn->weights);
-    free(nn->changes);
-    free(nn);
+    rm_free(nn->sizes);
+    rm_free(nn->biases);
+    rm_free(nn->activations);
+    rm_free(nn->deltas);
+    rm_free(nn->errors);
+    rm_free(nn->weights);
+    rm_free(nn->changes);
+    rm_free(nn);
 }
 
 void data_list_free(TrainData* list, uint data_amount) {
@@ -282,6 +345,6 @@ void data_list_free(TrainData* list, uint data_amount) {
 }
 
 void train_data_free(TrainData data) {
-    free(data.inputs);
-    free(data.outputs);
+    rm_free(data.inputs);
+    rm_free(data.outputs);
 }

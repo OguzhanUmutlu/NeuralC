@@ -1,3 +1,6 @@
 .vscode/
 nn
 nn.exe
+data.txt
+model.txt
+test/

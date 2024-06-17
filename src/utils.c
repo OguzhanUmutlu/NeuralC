@@ -32,7 +32,7 @@ NeuralNetwork *nn_make_str(uint input_size, char *hidden, uint output_size) {
 
     NeuralNetwork *nn = nn_make(input_size, hidden_list, hidden_amount, output_size);
 
-    free(hidden_list);
+    rm_free(hidden_list);
 
     return nn;
 }
@@ -81,7 +81,7 @@ TrainData *make_train_data_str(NeuralNetwork *nn, char *str, uint *data_size) {
     while (line != NULL) {
         char *equal_sign = strchr(line, '=');
         if (equal_sign == NULL) {
-            fprintf(stderr, "Invalid format in line: %s\n", line);
+            fprintf(stderr, "Invalid format in line(%d): %s\n", index, line);
             exit(1);
         }
 
@@ -99,10 +99,10 @@ TrainData *make_train_data_str(NeuralNetwork *nn, char *str, uint *data_size) {
             if (*p == ',') out_size++;
         }
         if (inp_size != input_size) {
-            throw_err("training_data[%d].inputs size doesn't match the neural network's input size.\n", index);
+            throw_err("training_data[%d].inputs size(%d) doesn't match the neural network's input size(%d).\n", index, inp_size, input_size);
         }
         if (out_size != output_size) {
-            throw_err("training_data[%d].outputs size doesn't match the neural network's output size.\n", index);
+            throw_err("training_data[%d].outputs size(%d) doesn't match the neural network's output size(%d).\n", index, out_size, output_size);
         }
 
         data_list[index].inputs = (double *)malloc(input_size * sizeof(double));
@@ -178,25 +178,25 @@ char *nn_to_string(NeuralNetwork *nn) {
 
     char *ptr = str;
 
-    ptr += sprintf(ptr, "%lf %lf %u %lf %lf %d %u ",
+    ptr += sprintf(ptr, "%lf %lf %u %lf %lf %d %u %u ",
                    nn->binary_thresh, nn->error_thresh, nn->max_iterations,
-                   nn->learning_rate, nn->momentum, nn->timeout,
+                   nn->learning_rate, nn->momentum, nn->timeout, nn->log_period,
                    nn->layer_amount);
 
-    for (int i = 0; i < nn->layer_amount; i++) {
-        ptr += sprintf(ptr, "%u ", nn->sizes[i]);
+    for (int layer = 0; layer < nn->layer_amount; layer++) {
+        ptr += sprintf(ptr, "%u ", nn->sizes[layer]);
     }
 
-    for (int i = 1; i < nn->layer_amount; i++) {
-        for (int j = 0; j < nn->sizes[i]; j++) {
-            ptr += sprintf(ptr, "%lf ", nn->biases[i][j]);
+    for (int layer = 1; layer < nn->layer_amount; layer++) {
+        for (int neuron = 0; neuron < nn->sizes[layer]; neuron++) {
+            ptr += sprintf(ptr, "%lf ", nn->biases[layer][neuron]);
         }
     }
 
-    for (int i = 1; i < nn->layer_amount; i++) {
-        for (int j = 0; j < nn->sizes[i]; j++) {
-            for (int k = 0; k < nn->sizes[i - 1]; k++) {
-                ptr += sprintf(ptr, "%lf ", nn->weights[i][j][k]);
+    for (int layer = 1; layer < nn->layer_amount; layer++) {
+        for (int neuron_to = 0; neuron_to < nn->sizes[layer]; neuron_to++) {
+            for (int neuron_from = 0; neuron_from < nn->sizes[layer - 1]; neuron_from++) {
+                ptr += sprintf(ptr, "%lf ", nn->weights[layer][neuron_to][neuron_from]);
             }
         }
     }
@@ -211,17 +211,17 @@ NeuralNetwork *nn_from_string(char *str) {
     char *ptr = str;
 
     int param_len;
-    sscanf(ptr, "%lf %lf %u %lf %lf %d %u %n",
+    sscanf(ptr, "%lf %lf %u %lf %lf %d %u %u %n",
            &nn->binary_thresh, &nn->error_thresh, &nn->max_iterations,
-           &nn->learning_rate, &nn->momentum, &nn->timeout,
+           &nn->learning_rate, &nn->momentum, &nn->timeout, &nn->log_period,
            &nn->layer_amount, &param_len);
     ptr += param_len;
 
     nn->sizes = (uint *)malloc(nn->layer_amount * sizeof(uint));
     malloc_check(nn->sizes);
 
-    for (int i = 0; i < nn->layer_amount; i++) {
-        sscanf(ptr, "%u", &nn->sizes[i]);
+    for (int layer = 0; layer < nn->layer_amount; layer++) {
+        sscanf(ptr, "%u", &nn->sizes[layer]);
         while (*ptr != ' ') ptr++;
         ptr++;
     }
@@ -229,34 +229,34 @@ NeuralNetwork *nn_from_string(char *str) {
     nn->biases = (double **)malloc(nn->layer_amount * sizeof(double *));
     malloc_check(nn->biases);
 
-    for (int i = 0; i < nn->layer_amount; i++) {
-        nn->biases[i] = (double *)malloc(nn->sizes[i] * sizeof(double));
-        malloc_check(nn->biases[i]);
+    for (int layer = 0; layer < nn->layer_amount; layer++) {
+        nn->biases[layer] = (double *)malloc(nn->sizes[layer] * sizeof(double));
+        malloc_check(nn->biases[layer]);
     }
 
-    for (int i = 1; i < nn->layer_amount; i++) {
-        for (int j = 0; j < nn->sizes[i]; j++) {
-            sscanf(ptr, "%lf", &nn->biases[i][j]);
+    for (int layer = 1; layer < nn->layer_amount; layer++) {
+        for (int neuron = 0; neuron < nn->sizes[layer]; neuron++) {
+            sscanf(ptr, "%lf", &nn->biases[layer][neuron]);
             while (*ptr != ' ') ptr++;
             ptr++;
         }
     }
 
-    nn->weights = (double ***)malloc((nn->layer_amount - 1) * sizeof(double **));
+    nn->weights = (double ***)malloc(nn->layer_amount * sizeof(double **));
     malloc_check(nn->weights);
-    for (int i = 1; i < nn->layer_amount; i++) {
-        nn->weights[i] = (double **)malloc(nn->sizes[i] * sizeof(double *));
-        malloc_check(nn->weights[i]);
-        for (int j = 0; j < nn->sizes[i]; j++) {
-            nn->weights[i][j] = (double *)malloc(nn->sizes[i - 1] * sizeof(double));
-            malloc_check(nn->weights[i][j]);
+    nn->weights[0] = NULL;
+    for (int layer = 1; layer < nn->layer_amount; layer++) {
+        nn->weights[layer] = (double **)malloc(nn->sizes[layer] * sizeof(double *));
+        malloc_check(nn->weights[layer]);
+        for (int neuron = 0; neuron < nn->sizes[layer]; neuron++) {
+            nn->weights[layer][neuron] = (double *)malloc(nn->sizes[layer - 1] * sizeof(double));
+            malloc_check(nn->weights[layer][neuron]);
         }
     }
-
-    for (int i = 1; i < nn->layer_amount; i++) {
-        for (int j = 0; j < nn->sizes[i]; j++) {
-            for (int k = 0; k < nn->sizes[i - 1]; k++) {
-                sscanf(ptr, "%lf", &nn->weights[i][j][k]);
+    for (int layer = 1; layer < nn->layer_amount; layer++) {
+        for (int neuron_to = 0; neuron_to < nn->sizes[layer]; neuron_to++) {
+            for (int neuron_from = 0; neuron_from < nn->sizes[layer - 1]; neuron_from++) {
+                sscanf(ptr, "%lf", &nn->weights[layer][neuron_to][neuron_from]);
                 while (*ptr != ' ') ptr++;
                 ptr++;
             }
@@ -281,12 +281,10 @@ void nn_save_to_file(NeuralNetwork *nn, char *filepath) {
     fclose(file);
 }
 
-NeuralNetwork *nn_load_from_file(char *filepath) {
+char *read_file(char *filepath) {
     FILE *file = fopen(filepath, "r");
 
-    if (file == NULL) {
-        throw_err("Error opening file.\n");
-    }
+    if (file == NULL) return NULL;
 
     fseek(file, 0, SEEK_END);
     long fileSize = ftell(file);
@@ -295,15 +293,51 @@ NeuralNetwork *nn_load_from_file(char *filepath) {
     char *buffer = (char *)malloc((fileSize + 1) * sizeof(char));
     if (buffer == NULL) {
         fclose(file);
-        throw_err("Memory allocation failed.\n");
+        return NULL;
     }
 
     size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
     buffer[bytesRead] = '\0';
 
     fclose(file);
+    return buffer;
+}
 
+NeuralNetwork *nn_load_from_file(char *filepath) {
+    char *buffer = read_file(filepath);
+    if (buffer == NULL) return NULL;
     NeuralNetwork *nn = nn_from_string(buffer);
-    free(buffer);
+    rm_free(buffer);
     return nn;
 }
+
+TrainData *load_train_data_from_file(NeuralNetwork *nn, char *filepath, uint *data_size) {
+    char *buffer = read_file(filepath);
+    if (buffer == NULL) return NULL;
+    TrainData *data_list = make_train_data_str(nn, buffer, data_size);
+    rm_free(buffer);
+    return data_list;
+}
+
+#ifdef _WIN32
+#include <windows.h>
+
+long long current_time_millis() {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER ull;
+    ull.LowPart = ft.dwLowDateTime;
+    ull.HighPart = ft.dwHighDateTime;
+    return ull.QuadPart / 10000;  // Convert from 100-nanosecond intervals to milliseconds
+}
+
+#else
+#include <sys/time.h>
+
+long long current_time_millis() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000LL + tv.tv_usec / 1000;
+}
+
+#endif

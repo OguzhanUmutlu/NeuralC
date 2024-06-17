@@ -16,6 +16,7 @@ struct NeuralNetwork {
     double learning_rate;
     double momentum;
     int timeout;  // in seconds
+    uint log_period;
 
     uint layer_amount;
     uint* sizes;

@@ -1,4 +1,5 @@
 # NeuralC
+
 A simple neural network made in C.
 
 ## Example usage
@@ -10,7 +11,7 @@ int main(void) {
     // Second argument is a string that has positive integers in it separated by commas. This indicates the hidden layers' sizes.
     // For example if there are 3 hidden layers with (3, 4 and 5 neurons) in them, you would do "3,4,5" for the hidden layers.
     // Third argument is a positive integer indicating how many outputs there will be.
-    NeuralNetwork* nn = nn_make_str(2, "3", 1);
+    NeuralNetwork* nn = nn_make_str(2, strdup("3"), 1);
 
     // Train data can be created like this. Inputs=Outputs and each training data separated by a \n(new line.)
     // If you have this in a file it will look like this:
@@ -33,6 +34,7 @@ int main(void) {
     // Free everything so the program doesn't leak memory
     data_list_free(data_list, data_size);
     free(result);
+    result = NULL;
     nn_free(nn);
     return 0;
 }
