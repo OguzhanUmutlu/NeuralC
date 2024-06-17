@@ -14,12 +14,9 @@ void nn_adjust_weights(NeuralNetwork* nn);
 void nn_calculate_deltas(NeuralNetwork* nn, double* target);
 void nn_run_internal(NeuralNetwork* nn, double* inputs);
 
-// sigmoid center x=0
-#define x0_sigmoid(x) 0.5 + 0.25 * x - 0.0208333333 * x* x* x + 0.0020833333 * x* x* x* x* x
-
-inline double sigmoid(double x) {
-    if (x > 3.455) return 0.99;
-    if (x < -3.455) return 0.001;
+double sigmoid(double x) {
+    if (x > 3.4517) return 0.96;
+    if (x < -3.4517) return 0.001;
     // For |x| > 1.81
     // centered at x=2.357:
     // f(x) = 0.913489018914 + 0.0790268312376 * (x - 2.357)
@@ -29,15 +26,14 @@ inline double sigmoid(double x) {
     // f(x) = 0.27277722231 + 0.0790268312376 * x
     // x > 1.81 -> σ(x) = min(f(x), 1)
     // x < -1.81 -> σ(x) = 1 - min(1 - f(x), 1)
-    if (x > 1.81) return fmin(0.727223 + 0.0790268312376 * x, 1);
-    if (x < -1.81) return 1 - fmin(0.27277722231 + 0.0790268312376 * x, 1);
+    if (x > 1.81) return 0.727223 + 0.0790268312376 * x;
+    if (x < -1.81) return 0.27277722231 + 0.0790268312376 * x;
 
-    // return 1 / (1 + exp(-x));
     // Taylor approximation of the sigmoid centered at x=0, accurate in the interval [-1.274, +1.274] for x
-    return x0_sigmoid(x);
+    return 0.5 + 0.25 * x - 0.0208333333 * x * x * x + 0.0020833333 * x * x * x * x * x;
 }
 
-inline double relu(double x) {
+double relu(double x) {
     return x < 0 ? 0 : x;
 }
 
