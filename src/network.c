@@ -15,8 +15,8 @@ void nn_calculate_deltas(NeuralNetwork* nn, double* target);
 void nn_run_internal(NeuralNetwork* nn, double* inputs);
 
 double sigmoid(double x) {
-    if (x > 3.4517) return 0.96;
-    if (x < -3.4517) return 0.001;
+    if (x > 3.4517) return 1;
+    if (x < -3.4517) return 0;
     // For |x| > 1.81
     // centered at x=2.357:
     // f(x) = 0.913489018914 + 0.0790268312376 * (x - 2.357)
